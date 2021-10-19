@@ -15,6 +15,8 @@ import java.util.Map;
 
 public class Main
 {
+    static final String graphName = "testgraph";
+
     public static void main( String[] args )
     {
         // initialize serializer
@@ -29,12 +31,11 @@ public class Main
                                  .serializer(serializer)
                                  .create();
 
-        String graphName = "testgraph";
-
         // connect to cluster
         Client client = cluster.connect();
 
-        // create a new graph... there are no strongly-typed ("bytecode") management APIs yet, so this must be pushed to server as script
+        // create a new graph
+        //  there are no strongly-typed ("bytecode") management APIs yet, so this must be pushed to server as script
         client.submit(String.format("cosmos.create('%s').throughput(Throughput.manual(400)).options([option:2]).commit()", graphName)).one();
 
         String traversalSourceName = String.format("%s_traversal", graphName);
@@ -56,7 +57,7 @@ public class Main
         t.iterate();
 
         // query the server to return the vertices we just created
-        List<Map<Object,Object>> results = g.V().hasLabel("person").valueMap(true).toList();
+        List<Map<Object, Object>> results = g.V().hasLabel("person").valueMap(true).toList();
 
         // iterate the results
         for(Map m : results)
