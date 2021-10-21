@@ -1,13 +1,20 @@
 
 import org.apache.tinkerpop.gremlin.driver.Client;
 import org.apache.tinkerpop.gremlin.driver.Cluster;
+import org.apache.tinkerpop.gremlin.driver.remote.DriverRemoteConnection;
 import org.apache.tinkerpop.gremlin.driver.ser.GraphSONMessageSerializerV2d0;
+import org.apache.tinkerpop.gremlin.process.traversal.AnonymousTraversalSource;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
 import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONMapper;
 import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONXModuleV2d0;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 import java.util.StringJoiner;
 
 public class Main
@@ -17,6 +24,37 @@ public class Main
     static final String edgesPath = "data/edges.gremlin";
 
     public static void main( String[] args ) throws IOException {
+
+        Client client = getClient();
+
+        String traversalSourceName = String.format("%s_traversal", graphName);
+
+        createGraph(client, traversalSourceName);
+
+        // create a "bytecode" friendly connection
+        DriverRemoteConnection conn = DriverRemoteConnection.using(client, traversalSourceName);
+
+        // create a traversal source we can use to issue queries
+        GraphTraversalSource g = AnonymousTraversalSource.traversal().withRemote(conn);
+
+        // query the server to return the vertices we just created
+        List<Map<Object, Object>> results = g.V().hasLabel("airport").limit(10).valueMap(true).toList();
+
+        // iterate the results
+        for(Map m : results)
+        {
+            System.out.println(m);
+        }
+
+        // drop the graph
+        g.V().drop().iterate();
+
+        // close the connection
+        client.close();
+    }
+
+    private static Client getClient() {
+
         // initialize serializer
         GraphSONMapper.Builder builder = GraphSONMapper.build()
                 .addCustomModule(GraphSONXModuleV2d0.build().create(false));
@@ -30,16 +68,24 @@ public class Main
                                  .create();
 
         // connect to cluster
-        Client client = cluster.connect();
+        return cluster.connect();
+    }
 
-        String traversalSourceName = String.format("%s_traversal", graphName);
+    private static void createGraph(Client client, String traversalSourceName) throws IOException {
 
         // create a new graph + schema + indices
         //  there are no strongly-typed ("bytecode") management APIs yet, so this must be pushed to server as script
         StringJoiner s = new StringJoiner(" ");
 
-        s.add(String.format("cosmos.create('%s').throughput(Throughput.manual(400)).options([option:2]).commit();", graphName));
+        s.add(String.format("cosmos.create('%s').throughput(Throughput.manual(1000)).options([option:2]).commit();", graphName));
+
+        s.add(String.format("cosmos.get('%s').schema().makeVertexLabel('country').commit();", graphName));
+        s.add(String.format("cosmos.get('%s').schema().makeVertexLabel('continent').commit();", graphName));
         s.add(String.format("cosmos.get('%s').schema().makeVertexLabel('airport').commit();", graphName));
+
+        s.add(String.format("cosmos.get('%s').schema().makeEdgeLabel('route').commit();", graphName));
+        s.add(String.format("cosmos.get('%s').schema().makeEdgeLabel('contains').commit();", graphName));
+
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('_id').dataType(DataType.String)).commit();", graphName));
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('type').dataType(DataType.String)).commit();", graphName));
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('code').dataType(DataType.String)).commit();", graphName));
@@ -53,52 +99,41 @@ public class Main
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('city').dataType(DataType.String)).commit();", graphName));
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('lat').dataType(DataType.Double)).commit();", graphName));
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('lon').dataType(DataType.Double)).commit();", graphName));
-        s.add(String.format("cosmos.get('%s').schema().addHashIndex(HashIndexBuilder.build('v_id', ElementType.Vertex).addKey('_id').unique()).commit();", graphName));
-        s.add(String.format("cosmos.get('%s').schema().makeEdgeLabel('route').commit();", graphName));
         s.add(String.format("cosmos.get('%s').schema().addPropertyKey(PropertyKeyBuilder.build('dist').dataType(DataType.Long)).commit();", graphName));
-        s.add(String.format("cosmos.get('%s').schema().addHashIndex(HashIndexBuilder.build('e_id', ElementType.Edge).addKey('_id')).commit();", graphName));
 
         client.submit(s.toString()).one();
 
-        AddData(client, nodesPath, traversalSourceName);
+        addIndex(client, "_id", true);
+        addIndex(client, "_id", false);
 
-        AddData(client, edgesPath, traversalSourceName);
-
-        /*
-        // create a "bytecode" friendly connection
-        DriverRemoteConnection conn = DriverRemoteConnection.using(client, traversalSourceName);
-
-        // create a traversal source we can use to issue queries
-        GraphTraversalSource g = AnonymousTraversalSource.traversal().withRemote(conn);
-
-        // build up a batch of vertex additions
-        GraphTraversal<Vertex, Vertex> t = g
-                .addV("person").property("name","Stew").property("age",23L)
-                .addV("person").property("name","Stevie").property("age",28L)
-                .addV("person").property("name","Patrick").property("age",18L)
-                .addV("person").property("name","Patricia").property("age",41L);
-
-        // send batch to server
-        t.iterate();
-
-        // query the server to return the vertices we just created
-        List<Map<Object, Object>> results = g.V().hasLabel("person").valueMap(true).toList();
-
-        // iterate the results
-        for(Map m : results)
-        {
-            System.out.println(m);
-        }
-
-        // drop the graph
-        g.V().drop().iterate();
-        */
-
-        // close the connection
-        cluster.close();
+        addData(client, nodesPath, traversalSourceName);
+        addData(client, edgesPath, traversalSourceName);
     }
 
-    private static void AddData(Client client, String path, String traversalSource) throws IOException {
+    private static void addIndex(Client client, String propName, Boolean isVertex) {
+
+        String indexName = String.format("%s%s", isVertex ? "v" : "e", propName);
+
+        StringJoiner s = new StringJoiner(" ");
+
+        s.add(String.format("mgmt = ConfiguredGraphFactory.open('%s').openManagement();", graphName));
+        s.add(String.format("prop = mgmt.getPropertyKey('%s');", propName));
+        s.add(String.format("mgmt.buildIndex('%s', %s).addKey(prop).buildCompositeIndex();", indexName, isVertex ? "Vertex.class" : "Edge.class"));
+        s.add("mgmt.commit();");
+        s.add(String.format("mgmt = ConfiguredGraphFactory.open('%s').openManagement();", graphName));
+        s.add(String.format("mgmt.updateIndex(mgmt.getGraphIndex('%s'), SchemaAction.REGISTER_INDEX).get();", indexName));
+        s.add("mgmt.commit();");
+        s.add(String.format("ManagementSystem.awaitGraphIndexStatus(ConfiguredGraphFactory.open('%s'), '%s').status(SchemaStatus.REGISTERED).call();", graphName, indexName));
+        s.add(String.format("mgmt = ConfiguredGraphFactory.open('%s').openManagement();", graphName));
+        s.add(String.format("mgmt.updateIndex(mgmt.getGraphIndex('%s'), SchemaAction.REINDEX).get();", indexName));
+        s.add("mgmt.commit();");
+        s.add(String.format("ManagementSystem.awaitGraphIndexStatus(ConfiguredGraphFactory.open('%s'), '%s').status(SchemaStatus.ENABLED).call();0;", graphName, indexName));
+
+        client.submit(s.toString()).one();
+    }
+
+    private static void addData(Client client, String path, String traversalSource) throws IOException {
+
         BufferedReader br = new BufferedReader(new FileReader(path));
         String line;
         while ((line = br.readLine()) != null) {
