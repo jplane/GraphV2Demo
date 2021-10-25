@@ -178,23 +178,11 @@ public class Main
     private static void addData(Client client, String path, String traversalSource) throws IOException {
 
         BufferedReader br = new BufferedReader(new FileReader(path));
-        StringJoiner s = new StringJoiner("; ");
-        int count = 0;
         String line;
 
         while ((line = br.readLine()) != null) {
-
-            s.add(line);
-
-            if (++count == 5) {
-                client.submit(s.toString().replace("g.", String.format("%s.", traversalSource))).one();
-                s = new StringJoiner("; ");
-                count = 0;
-            }
-        }
-
-        if (s.length() > 0) {
-            client.submit(s.toString().replace("g.", String.format("%s.", traversalSource))).one();
+            line = line.replace("g.", String.format("%s.", traversalSource));
+            client.submit(line).one();
         }
     }
 }
