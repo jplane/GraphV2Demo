@@ -14,6 +14,9 @@ import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.tinkerpop.gremlin.process.traversal.P.gt;
+import static org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.__.values;
+
 public class Main
 {
     static final String nodesPath = "data/nodes.gremlin";
@@ -41,10 +44,13 @@ public class Main
                     // create a traversal source we can use to issue queries
                     GraphTraversalSource g = AnonymousTraversalSource.traversal().withRemote(conn)
             ) {
-                // query the server to return the vertices we just created
-                List<Map<Object, Object>> results = g.V().hasLabel("airport").limit(50).valueMap(true).toList();
+                List<Map<Object, Object>> results = g.V().has("code", "ATL")
+                                                         .outE()
+                                                         .where(values("dist").is(gt(1000)))
+                                                         .inV()
+                                                         .valueMap("code", "desc")
+                                                         .toList();
 
-                // iterate the results
                 for (Map m : results) {
                     System.out.println(m);
                 }
